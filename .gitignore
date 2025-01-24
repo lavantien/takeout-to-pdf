@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.python-version
+all_emails_combined.pdf
+exported_emails.mbox
+hello.py
+uv.lock
+pyproject.toml
+all_emails_combined_pics.pdf
+emails.mbox
+emails_combined.pdf
