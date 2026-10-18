@@ -1,139 +1,21 @@
-import mailbox
-import os
+import argparse
 import base64
 import html
+import mailbox
+import os
+import sys
+from datetime import timezone
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from weasyprint import HTML
-from tqdm import tqdm
+
 from bs4 import BeautifulSoup
+from tqdm import tqdm
+from weasyprint import HTML
 
-# Configuration
-MBOX_PATH = "emails.mbox"
-OUTPUT_PDF = "emails_combined.pdf"
-TEMP_IMG_DIR = "temp_images"
-os.makedirs(TEMP_IMG_DIR, exist_ok=True)
+DEFAULT_MBOX = "emails.mbox"
+DEFAULT_PDF = "emails_combined.pdf"
 
-
-def decode_mime(text: str) -> str:
-    """Decode MIME-encoded header strings with proper exception handling"""
-    decoded = []
-    for part, encoding in decode_header(text or ""):
-        if isinstance(part, bytes):
-            try:
-                decoded_part = part.decode(
-                    encoding or "utf-8", errors="replace")
-            except (UnicodeDecodeError, LookupError) as decode_error:
-                try:
-                    decoded_part = part.decode("latin-1", errors="replace")
-                except Exception as fallback_error:
-                    decoded_part = f"[Decode Error: {fallback_error}]"
-            decoded.append(decoded_part)
-        else:
-            decoded.append(str(part))
-    return " ".join(decoded)
-
-
-def _extract_body_part(message) -> tuple:
-    """Extract text/plain or text/html body part from email"""
-    text_part = html_part = None
-    if message.is_multipart():
-        for part in message.walk():
-            content_type = part.get_content_type()
-            if content_type == "text/plain":
-                text_part = part
-                break  # Prioritize plain text
-            elif content_type == "text/html":
-                html_part = part
-    else:
-        if message.get_content_type() in {"text/plain", "text/html"}:
-            return (message, None)
-    return (text_part, html_part)
-
-
-def _decode_body(part) -> str:
-    """Decode email body content with proper error handling"""
-    try:
-        payload = part.get_payload(decode=True)
-        charset = part.get_content_charset("utf-8")
-        body_content = payload.decode(charset, errors="replace")
-
-        if part.get_content_type() == "text/html":
-            soup = BeautifulSoup(body_content, "html.parser")
-            return soup.get_text(separator="\n", strip=True)
-        return body_content.strip()
-
-    except (UnicodeDecodeError, LookupError):
-        return payload.decode("latin-1", errors="replace").strip()
-    except Exception as e:
-        return f"[Body decode error: {str(e)}]"
-
-
-def _extract_images(message) -> list:
-    """Extract embedded images with error handling"""
-    images = []
-    try:
-        if message.is_multipart():
-            for part in message.walk():
-                if part.get_content_maintype() == "image":
-                    try:
-                        image_data = part.get_payload(decode=True)
-                        if image_data:
-                            images.append({
-                                "mime_type": part.get_content_type(),
-                                "data": base64.b64encode(image_data).decode("ascii")
-                            })
-                    except Exception as image_error:
-                        images.append({
-                            "mime_type": "text/plain",
-                            "data": f"Image error: {str(image_error)}"
-                        })
-    except Exception as general_error:
-        images.append({
-            "mime_type": "text/plain",
-            "data": f"Image extraction failed: {str(general_error)}"
-        })
-    return images
-
-
-def process_email(message):
-    """Process email with reduced complexity through helper functions"""
-    email_data = {
-        "date": parsedate_to_datetime(message["date"]) if message["date"] else None,
-        "from": decode_mime(message["from"]) or "Unknown Sender",
-        "subject": decode_mime(message["subject"]) or "No Subject",
-        "body": "[No content available]",
-        "images": []
-    }
-
-    # Body extraction
-    text_part, html_part = _extract_body_part(message)
-    target_part = text_part or html_part
-    if target_part:
-        email_data["body"] = _decode_body(target_part) or "[Empty content]"
-
-    # Image extraction
-    email_data["images"] = _extract_images(message)
-
-    return email_data
-
-
-# Load and sort emails
-print("Loading and processing emails...")
-mbox = mailbox.mbox(MBOX_PATH)
-emails = []
-for message in tqdm(mbox, desc="Processing emails"):
-    emails.append(process_email(message))
-mbox.close()
-
-# Sort by date (oldest first)
-emails = sorted(
-    [e for e in emails if e["date"]],
-    key=lambda x: x["date"]
-) + [e for e in emails if not e["date"]]
-
-# Build HTML content
-html_template = """
+HTML_HEAD = """
 <html>
     <head>
         <meta charset="UTF-8">
@@ -162,39 +44,173 @@ html_template = """
     <body>
 """
 
-for idx, email in enumerate(tqdm(emails, desc="Building HTML")):
+HTML_TAIL = """
+    </body>
+</html>
+"""
+
+
+def decode_mime(text: str) -> str:
+    decoded = []
+    for part, encoding in decode_header(text or ""):
+        if isinstance(part, bytes):
+            try:
+                decoded_part = part.decode(encoding or "utf-8", errors="replace")
+            except (UnicodeDecodeError, LookupError):
+                decoded_part = part.decode("latin-1", errors="replace")
+            decoded.append(decoded_part)
+        else:
+            decoded.append(str(part))
+    return " ".join(decoded)
+
+
+def parse_date(raw: str):
+    if not raw:
+        return None
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _extract_body_part(message):
+    text_part = html_part = None
+    if message.is_multipart():
+        for part in message.walk():
+            content_type = part.get_content_type()
+            if content_type == "text/plain":
+                return part, None
+            if content_type == "text/html" and html_part is None:
+                html_part = part
+    elif message.get_content_type() in {"text/plain", "text/html"}:
+        return message, None
+    return text_part, html_part
+
+
+def _decode_body(part) -> str:
+    payload = part.get_payload(decode=True)
+    try:
+        charset = part.get_content_charset("utf-8")
+        body = payload.decode(charset, errors="replace")
+    except (UnicodeDecodeError, LookupError):
+        return payload.decode("latin-1", errors="replace").strip()
+    if part.get_content_type() == "text/html":
+        return BeautifulSoup(body, "html.parser").get_text(
+            separator="\n", strip=True
+        )
+    return body.strip()
+
+
+def _extract_images(message) -> list[dict]:
+    images = []
+    if message.is_multipart():
+        for part in message.walk():
+            if part.get_content_maintype() != "image":
+                continue
+            data = part.get_payload(decode=True)
+            if data:
+                images.append(
+                    {
+                        "mime_type": part.get_content_type(),
+                        "data": base64.b64encode(data).decode("ascii"),
+                    }
+                )
+    return images
+
+
+def process_email(message) -> dict:
+    text_part, html_part = _extract_body_part(message)
+    target_part = text_part or html_part
+    body = "[No content available]"
+    if target_part:
+        body = _decode_body(target_part) or "[Empty content]"
+    return {
+        "date": parse_date(message["date"]),
+        "from": decode_mime(message["from"]) or "Unknown Sender",
+        "subject": decode_mime(message["subject"]) or "No Subject",
+        "body": body,
+        "images": _extract_images(message),
+    }
+
+
+def render_email(index: int, email_data: dict) -> str:
     images_html = "".join(
-        f'<img src="data:{img["mime_type"]};base64,{
-            img["data"]}" alt="Email image">'
-        for img in email["images"]
+        f'<img src="data:{img["mime_type"]};base64,{img["data"]}" alt="Email image">'
+        for img in email_data["images"]
     )
-
-    date_str = email["date"].strftime(
-        "%Y-%m-%d %H:%M:%S") if email["date"] else "Unknown date"
-
-    html_template += f"""
+    date_str = (
+        email_data["date"].strftime("%Y-%m-%d %H:%M:%S")
+        if email_data["date"]
+        else "Unknown date"
+    )
+    return f"""
     <div class="email">
-        <h3>Email {idx+1}</h3>
+        <h3>Email {index}</h3>
         <div class="meta">
-            <div><strong>From:</strong> {email['from']}</div>
+            <div><strong>From:</strong> {html.escape(email_data["from"])}</div>
             <div><strong>Date:</strong> {date_str}</div>
-            <div><strong>Subject:</strong> {email['subject']}</div>
+            <div><strong>Subject:</strong> {html.escape(email_data["subject"])}</div>
         </div>
-        <div class="body">{html.escape(email['body'])}</div>
+        <div class="body">{html.escape(email_data["body"])}</div>
         <div class="images">{images_html}</div>
     </div>
     """
 
-html_template += "</body></html>"
 
-# Generate PDF
-print("Generating PDF...")
-HTML(string=html_template).write_pdf(OUTPUT_PDF)
+def build_document(emails: list[dict]) -> str:
+    cards = [
+        render_email(index, email_data)
+        for index, email_data in enumerate(
+            tqdm(emails, desc="Building HTML"), start=1
+        )
+    ]
+    return HTML_HEAD + "\n".join(cards) + HTML_TAIL
 
-# Cleanup
-print("Cleaning temporary files...")
-for f in os.listdir(TEMP_IMG_DIR):
-    os.remove(os.path.join(TEMP_IMG_DIR, f))
-os.rmdir(TEMP_IMG_DIR)
 
-print(f"\nSuccessfully created {OUTPUT_PDF} with {len(emails)} emails!")
+def load_emails(mbox_path: str) -> list[dict]:
+    print(f"Loading and processing emails from {mbox_path}...")
+    box = mailbox.mbox(mbox_path)
+    emails = [process_email(message) for message in tqdm(box, desc="Processing emails")]
+    box.close()
+    dated = sorted(
+        (email_data for email_data in emails if email_data["date"]),
+        key=lambda email_data: email_data["date"],
+    )
+    undated = [email_data for email_data in emails if not email_data["date"]]
+    return dated + undated
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="convert a Google Takeout Gmail mbox into one combined pdf"
+    )
+    parser.add_argument(
+        "-i", "--input", default=DEFAULT_MBOX, help="path to the mbox file"
+    )
+    parser.add_argument(
+        "-o", "--output", default=DEFAULT_PDF, help="path to the output pdf"
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if not os.path.isfile(args.input):
+        sys.exit(f"error: mbox not found: {args.input}")
+    output_dir = os.path.dirname(os.path.abspath(args.output))
+    if not os.path.isdir(output_dir):
+        sys.exit(f"error: output directory not found: {output_dir}")
+    emails = load_emails(args.input)
+    if not emails:
+        sys.exit(f"error: no messages found in {args.input}")
+    document = build_document(emails)
+    print("Generating PDF...")
+    HTML(string=document).write_pdf(args.output)
+    print(f"\nSuccessfully created {args.output} with {len(emails)} emails!")
+
+
+if __name__ == "__main__":
+    main()

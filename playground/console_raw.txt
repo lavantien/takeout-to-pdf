@@ -1,0 +1,11 @@
+uv run --no-project --python .venv main.py 
+Loading and processing emails from emails.mbox...
+
+Processing emails:   0%|          | 0/8 [00:00<?, ?it/s]
+Processing emails: 100%|██████████| 8/8 [00:00<00:00, 4835.63it/s]
+
+Building HTML:   0%|          | 0/8 [00:00<?, ?it/s]
+Building HTML: 100%|██████████| 8/8 [00:00<00:00, 89717.73it/s]
+Generating PDF...
+
+Successfully created emails_combined.pdf with 8 emails!

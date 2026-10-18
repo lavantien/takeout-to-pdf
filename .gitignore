@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.tools
 .python-version
 all_emails_combined.pdf
 exported_emails.mbox
