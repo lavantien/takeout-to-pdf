@@ -1,0 +1,31 @@
+@startuml extraction
+left to right direction
+!pragma layout smetana
+skinparam shadowing false
+skinparam monochrome true
+skinparam componentStyle rectangle
+title what happens to one message
+
+file "mbox message" as msg
+[decode From and Subject\nlatin-1 fallback on error] as headers
+[body part choice] as choice
+[decode the\ntext/plain part] as plain
+[BeautifulSoup over\nthe text/html part] as soup
+[no usable part\nbody placeholder] as none
+[collect every image part\nwith data, as a base64\ndata URI] as images
+[Date header] as date
+[keep the datetime] as dated
+[mark undated] as undated
+
+msg --> headers
+headers --> choice
+choice --> plain : text/plain first
+choice --> soup : html only
+choice --> none : neither
+plain --> images
+soup --> images
+none --> images
+images --> date
+date --> dated : parses
+date --> undated : missing or invalid
+@enduml

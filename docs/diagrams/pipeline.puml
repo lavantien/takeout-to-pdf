@@ -1,0 +1,21 @@
+@startuml pipeline
+left to right direction
+!pragma layout smetana
+skinparam shadowing false
+skinparam monochrome true
+skinparam componentStyle rectangle
+title whole run, from mbox to pdf
+
+file "mbox input\ndefault emails.mbox" as mbox
+[parse every message\nmailbox.mbox] as parse
+[sort\ndated oldest first\nundated last] as sort
+[build one styled\nHTML document] as html
+[WeasyPrint\nrenders the HTML] as render
+file "output pdf\ndefault emails_combined.pdf" as out
+
+mbox --> parse
+parse --> sort
+sort --> html
+html --> render
+render --> out
+@enduml
