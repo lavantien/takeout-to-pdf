@@ -81,7 +81,7 @@ make setup creates a Python 3.14 uv virtual environment and installs weasyprint,
 - make help: list every target
 - make setup: create the virtual environment and install dependencies
 - make run: convert ./emails.mbox into ./emails_combined.pdf, ARGS passes flags through
-- make diagrams: render every docs/diagrams/*.puml into a png beside it, the pinned plantuml jar is fetched and checksum verified on first use
+- make diagrams: render every docs/diagrams/*.puml into a png beside it
 - make clean: remove the virtual environment and the output pdf
 
 ## Verification
